@@ -801,7 +801,7 @@ def insert_news_from_csv(engine, articles_csv_path, summary_csv_path):
     except Exception as e:
         print(f"❌ topic_id 검증 실패: {e}")
 
-    # 중복 제거
+    # 5) 중복 제거
     try:
         existing_news = pd.read_sql("SELECT topic_id,title,news_link FROM news", engine)
         print(f"📰 기존 news 개수: {len(existing_news)}")
@@ -815,7 +815,7 @@ def insert_news_from_csv(engine, articles_csv_path, summary_csv_path):
     except Exception as e:
         print(f"ℹ️ news 중복 검사 실패: {e}")
 
-    # 최종 삽입
+    # 6) 최종 삽입 (✅ image_url 제외, ✅ news_summary 포함)
     if len(merged) == 0:
         print(f"ℹ️ 삽입할 news가 없음")
         return

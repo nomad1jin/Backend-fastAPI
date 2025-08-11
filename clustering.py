@@ -85,7 +85,7 @@ import numpy as np
 from collections import defaultdict
 from tqdm import tqdm
 
-### 새로운 데이터 군집화 
+### 5. 새로운 데이터 군집화하기 위한 df1000의 centroid 계산
 def compute_embedding_centroids_from_tfidf(df, embedding_col='embedding', cluster_col='tfidf_cluster_id'):
     centroids = {}
     cluster_embeddings = defaultdict(list)
@@ -352,6 +352,51 @@ def merge_cluster_third_results(df1000, new_df):
 #     final_df.to_csv("final_clustering.csv", index=False, encoding='utf-8-sig')
 #     return final_df
 
+def assign_cluster_ids_with_df1000_seed(final_df: pd.DataFrame) -> pd.DataFrame:
+    df = final_df.copy()
+    df["tfidf_cluster_id"] = df["tfidf_cluster_id"].fillna(-1).astype(int)
+
+    # === 1) 시드 계산: df1000(= is_new False)에서 최대값 찾기
+    seed_candidates = []
+
+    mask_seed = (df.get("is_new", False) == False) & (df["tfidf_cluster_id"] != -1)
+    if "cluster_id" in df.columns:
+        seed_candidates += df.loc[mask_seed & (df["cluster_id"] != -1), "cluster_id"].tolist()
+
+    seed_candidates += df.loc[mask_seed, "tfidf_cluster_id"].tolist()
+
+    seed_max = max(seed_candidates) if len(seed_candidates) > 0 else 0
+    start_id = int(seed_max) + 1
+    next_id = start_id
+
+    # === 2) A: 신규 & 비노이즈 & 3차 아님 → 군집 단위 발급
+    mask_A = (df["is_new"] == True) & (df["is_third"] == False) & (df["tfidf_cluster_id"] != -1)
+    uniq_A = sorted(df.loc[mask_A, "tfidf_cluster_id"].unique().tolist())
+    map_A = {lbl: (next_id + i) for i, lbl in enumerate(uniq_A)}
+    next_id += len(uniq_A)
+
+    # === 3) B: 신규 & 3차(재군집) & 비노이즈 → 군집 단위 발급
+    mask_B = (df["is_new"] == True) & (df["is_third"] == True) & (df["tfidf_cluster_id"] != -1)
+    uniq_B = sorted(df.loc[mask_B, "tfidf_cluster_id"].unique().tolist())
+    map_B = {lbl: (next_id + i) for i, lbl in enumerate(uniq_B)}
+    next_id += len(uniq_B)
+
+    # === 4) 적용: 기본은 기존값 보존, 없으면 -1로 채운 뒤 A→B 매핑
+    # 기존 df1000의 cluster_id가 있으면 그대로 보존
+    if "cluster_id" not in df.columns:
+        df["cluster_id"] = -1
+
+    full_map = {**map_A, **map_B}
+    need_map = df["tfidf_cluster_id"].isin(full_map.keys())
+    df.loc[need_map, "cluster_id"] = df.loc[need_map, "tfidf_cluster_id"].map(full_map).astype(int)
+
+    print(f"df1000 시드 seed_max={seed_max} → 시작={start_id}")
+    print(f"A(신규·비노이즈) 군집 수: {len(uniq_A)}")
+    print(f"B(신규·3차 재군집) 군집 수: {len(uniq_B)}")
+    print(f"최종 cluster_id 범위: {df['cluster_id'].min()} ~ {df['cluster_id'].max()}")
+
+    return df
+
 
 import os
 from datetime import datetime 
@@ -413,21 +458,13 @@ def run_clustering(final_df1000_path: str = "path/to/final_df1000.csv"):
     if ENGINE:
         with ENGINE.connect() as conn:
             result = conn.execute(text("SELECT MAX(id) FROM topic"))
-            max_cluster_id = result.scalar() or 0
+            max_cluster_id = result.scalar() 
     else:
         max_cluster_id = 0
     print(f"현재 DB 최대 cluster_id: {max_cluster_id}")
 
-    # 7) cluster_id 밀기  🔧 (노이즈는 그대로, 나머지만 offset)
-    final_df["tfidf_cluster_id"] = final_df["tfidf_cluster_id"].fillna(-1).astype(int)
-
-    offset = (max_cluster_id + 1) if max_cluster_id is not None else 0
-
-    final_df["cluster_id"] = np.where(
-        final_df["tfidf_cluster_id"] == -1,     # 노이즈는
-        -1,                                     # 그대로 -1 유지
-        final_df["tfidf_cluster_id"] + offset   # 그 외만 밀기
-    ).astype(int)
+    # 7) df1000을 시드로 A→B 군집 단위 부여
+    final_df = assign_cluster_ids_with_df1000_seed(final_df)
 
     print(f"변환 후 cluster_id 범위: {final_df['cluster_id'].min()} ~ {final_df['cluster_id'].max()}")
 

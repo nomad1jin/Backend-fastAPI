@@ -15,7 +15,6 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
-from webdriver_manager.chrome import ChromeDriverManager
 
 # 크롤링 파일 상단에 추가
 from preprocessing import (
@@ -37,7 +36,7 @@ def delete_10_data():
     df = pd.read_csv(file_path)
 
     # 맨 위 10개 삭제
-    df = df.iloc[10:].reset_index(drop=True)
+    df = df.iloc[5:].reset_index(drop=True)
 
     df.to_csv(file_path, index=False, encoding="utf-8-sig")
 
@@ -47,47 +46,25 @@ def delete_10_data():
     df = pd.read_csv(file_path)
 
     # 맨 위 10개 삭제
-    df = df.iloc[10:].reset_index(drop=True)
+    df = df.iloc[5:].reset_index(drop=True)
 
     df.to_csv(file_path, index=False, encoding="utf-8-sig")
     print(f"🗑 최신 데이터 10개 삭제 완료 → 남은 행 수: {len(df)}")
 
+
 def create_driver():
     options = Options()
-    # Windows면 binary_location 지정 아예 빼도 됨 (설치된 Chrome 자동 탐색)
-    # Linux 서버에서만 CHROME_BIN 있을 때만 세팅
-    chrome_bin = os.environ.get("CHROME_BIN")
-    if chrome_bin:
-        options.binary_location = chrome_bin
-
+    options.binary_location = os.environ.get("CHROME_BIN", "/usr/bin/chromium")
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1280,1696")
     options.add_argument("--lang=ko-KR")
     options.add_experimental_option("prefs", {"intl.accept_languages": "ko,ko_KR"})
-    # 보너스: UA 지정(헤드리스 탐지 회피)
-    options.add_argument(
-        "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    )
 
-    service = Service(ChromeDriverManager().install())
+    service = Service(os.environ.get("CHROMEDRIVER_PATH", "/usr/bin/chromedriver"))
     return webdriver.Chrome(service=service, options=options)
-
-# def create_driver():
-#     options = Options()
-#     options.binary_location = os.environ.get("CHROME_BIN", "/usr/bin/chromium")
-#     options.add_argument("--headless=new")
-#     options.add_argument("--no-sandbox")
-#     options.add_argument("--disable-dev-shm-usage")
-#     options.add_argument("--disable-gpu")
-#     options.add_argument("--window-size=1280,1696")
-#     options.add_argument("--lang=ko-KR")
-#     options.add_experimental_option("prefs", {"intl.accept_languages": "ko,ko_KR"})
-
-#     service = Service(os.environ.get("CHROMEDRIVER_PATH", "/usr/bin/chromedriver"))
-#     return webdriver.Chrome(service=service, options=options)
 
 # 전처리
 def preprocess_before_save(df: pd.DataFrame) -> pd.DataFrame:
@@ -129,8 +106,7 @@ def preprocess_before_save(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 def load_previous_data(collected_path, total_path):
-    ### 수집안됐으면 삭제해서 사용하기 
-    # delete_10_data()
+    delete_10_data()
     try:
         if os.path.exists(collected_path):
             df = pd.read_csv(collected_path)

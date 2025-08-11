@@ -98,10 +98,12 @@ def convert_korean_datetime(dt_str):
         hour = int(hour)
         minute = int(minute)
 
-        if ampm == "오전" and hour < 12:
-            hour += 12
-        if ampm == "오후" and hour == 12:
-            hour = 0
+        if ampm == "오전":
+            if hour == 12:
+                hour = 0
+        elif ampm == "오후":
+            if hour != 12:
+                hour += 12
 
         dt = datetime(int(year), int(month), int(day), hour, minute)
         return dt
