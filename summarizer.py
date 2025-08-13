@@ -457,6 +457,31 @@ def save_commandr_output_to_db(df, summary_result, cluster_id, engine):
     else:
         print(f"ℹ️ news 중복으로 신규 없음: {cid}")
 
+#### 추가) publish_date를 기준으로 24시간전 데이터면 is_new를 false로 갱신!!!!     
+def normalize_is_new(engine):
+    with engine.begin() as conn:
+        before_new = conn.execute(
+            text("SELECT COUNT(*) FROM news WHERE is_new = 1")
+        ).scalar()
+
+        result = conn.execute(text("""
+            UPDATE news
+            SET is_new = CASE
+                WHEN COALESCE(
+                            STR_TO_DATE(publish_date, '%Y-%m-%d %H:%i:%s'),
+                            STR_TO_DATE(publish_date, '%Y-%m-%d %H:%i')
+                        ) >= CONVERT_TZ(NOW(), @@session.time_zone, '+09:00') - INTERVAL 24 HOUR
+                THEN 1 ELSE 0
+            END;
+        """))
+        updated_rows = result.rowcount
+
+        after_new = conn.execute(
+            text("SELECT COUNT(*) FROM news WHERE is_new = 1")
+        ).scalar()
+
+    print(f"is_new 정규화 완료: 변경된 행 {updated_rows}개, "
+          f"NEW(1) {before_new} → {after_new}")
 
 def run_summarization(
         df,
@@ -576,6 +601,9 @@ def run_summarization(
                 else:
                     print(f"⚠️ articles CSV가 비어있어 news 삽입 스킵")
 
+                # ★ 여기서 바로 정규화 실행
+                normalize_is_new(engine)
+                
         except Exception as e:
             print(f"❌ DB 처리 실패: {e}")
             import traceback
