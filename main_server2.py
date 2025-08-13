@@ -88,14 +88,16 @@
 import os
 import time
 import traceback
-from threading import Thread, Event
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from contextlib import asynccontextmanager
+from threading import Thread, Event
 
 from fastapi import FastAPI
-from crawler import run_crawling
+
 from clustering import run_clustering
+from crawler import run_crawling
+from notification_ping import send_ping
 
 BASE_DIR = Path(__file__).resolve().parent
 FINAL_DF1000_PATH = BASE_DIR / "df1000_result_3.csv"  # df1000
@@ -131,6 +133,18 @@ def run_cycle():
     print(f"----- [CLUSTER START] {started_at} → run_clustering() -----")
     try:
         result = run_clustering(FINAL_DF1000_PATH)
+
+        # api 호출
+        try:
+            ping = send_ping({
+                "source": "python-pipeline",
+                "batchId": os.getenv("BATCH_ID", "manual"),
+                "finishedAt": int(time.time() * 1000)
+            })
+            print("PING OK:", ping)
+        except Exception as e:
+            print("⚠️ ping 전송 실패:", e)
+
         print(f"----- [CLUSTER END]   {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ✓ {result} -----")
     except SystemExit:
         print("⚠️ run_clustering()에서 SystemExit → 다음 주기까지 대기")
