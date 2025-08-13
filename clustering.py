@@ -360,22 +360,49 @@ def merge_cluster_third_results(df1000, new_df):
 #     final_df.to_csv("final_clustering.csv", index=False, encoding='utf-8-sig')
 #     return final_df
 
-def assign_cluster_ids_with_df1000_seed(final_df: pd.DataFrame) -> pd.DataFrame:
+def assign_cluster_ids_with_df1000_seed(final_df: pd.DataFrame, db_max_id: int | None = None) -> pd.DataFrame:
     df = final_df.copy()
     df["tfidf_cluster_id"] = df["tfidf_cluster_id"].fillna(-1).astype(int)
 
-    # === 1) 시드 계산: df1000(= is_new False)에서 최대값 찾기
     seed_candidates = []
 
-    mask_seed = (df.get("is_new", False) == False) & (df["tfidf_cluster_id"] != -1)
+    # (a) 기존에 이미 부여돼 있던 cluster_id도 후보에 포함
     if "cluster_id" in df.columns:
-        seed_candidates += df.loc[mask_seed & (df["cluster_id"] != -1), "cluster_id"].tolist()
+        seed_candidates += df.loc[df["cluster_id"] != -1, "cluster_id"].tolist()
 
+    # (b) df1000의 진짜 기존 라벨만 (third 제외)
+    mask_seed = (
+        (df.get("is_new", False) == False) &
+        (df.get("is_third", False) == False) &
+        (df["tfidf_cluster_id"] != -1)
+    )
     seed_candidates += df.loc[mask_seed, "tfidf_cluster_id"].tolist()
 
-    seed_max = max(seed_candidates) if len(seed_candidates) > 0 else 0
+    # (c) DB MAX(id)도 후보에 포함
+    if db_max_id is not None:
+        seed_candidates.append(int(db_max_id))
+
+    seed_max = max(seed_candidates) if seed_candidates else -1
     start_id = int(seed_max) + 1
     next_id = start_id
+
+    # df = final_df.copy()
+    # df["tfidf_cluster_id"] = df["tfidf_cluster_id"].fillna(-1).astype(int)
+
+    # # === 1) 시드 계산: df1000(= is_new False, is_third False)에서 최대값 찾기
+    # # 1) '진짜 기존(df1000, 3차 전)' 라벨만 씨드 후보로
+    # mask_seed = (
+    #     (df.get("is_new", False) == False) &
+    #     (df.get("is_third", False) == False) &   # ★ 3차에서 새로 생긴 라벨 제외
+    #     (df["tfidf_cluster_id"] != -1)
+    # )
+
+    # # ★ 과거 cluster_id는 씨드 산정에서 제외 (충돌/팽창 방지)
+    # seed_candidates = df.loc[mask_seed, "tfidf_cluster_id"].tolist()
+
+    # seed_max = max(seed_candidates) if seed_candidates else 0
+    # start_id = int(seed_max) + 1
+    # next_id = start_id
 
     # === 2) A: 신규 & 비노이즈 & 3차 아님 → 군집 단위 발급
     mask_A = (df["is_new"] == True) & (df["is_third"] == False) & (df["tfidf_cluster_id"] != -1)
@@ -401,8 +428,10 @@ def assign_cluster_ids_with_df1000_seed(final_df: pd.DataFrame) -> pd.DataFrame:
     print(f"df1000 시드 seed_max={seed_max} → 시작={start_id}")
     print(f"A(신규·비노이즈) 군집 수: {len(uniq_A)}")
     print(f"B(신규·3차 재군집) 군집 수: {len(uniq_B)}")
-    print(f"최종 cluster_id 범위: {df['cluster_id'].min()} ~ {df['cluster_id'].max()}")
-
+    if (df["cluster_id"] != -1).any():
+        print(f"최종 cluster_id 범위: {df['cluster_id'].min()} ~ {df['cluster_id'].max()}")
+    else:
+        print("최종 cluster_id 범위: 신규 배정 없음 (전부 -1)")
     return df
 
 
@@ -472,27 +501,40 @@ def run_clustering(final_df1000_path: str = "path/to/final_df1000.csv"):
     print(f"현재 DB 최대 cluster_id: {max_cluster_id}")
 
     # 7) df1000을 시드로 A→B 군집 단위 부여
-    final_df = assign_cluster_ids_with_df1000_seed(final_df)
+    final_df = assign_cluster_ids_with_df1000_seed(final_df, db_max_id=max_cluster_id)
 
-    print(f"변환 후 cluster_id 범위: {final_df['cluster_id'].min()} ~ {final_df['cluster_id'].max()}")
+    if (final_df["cluster_id"] != -1).any():
+        print(f"변환 후 cluster_id 범위: {final_df['cluster_id'].min()} ~ {final_df['cluster_id'].max()}")
+    else:
+        print("변환 후 cluster_id 범위: 신규 배정 없음 (전부 -1)")
+
 
     # 8) 요약 대상 cluster_id 선정  🔧 (3차로 '새로 생긴' + 기존에 '합류'한)
     # (a) 기존에 df1000 쪽에 존재하던 클러스터(노이즈 제외)
     preexisting_clusters = set(
-        final_df.loc[(final_df["is_new"] == False) & (final_df["tfidf_cluster_id"] != -1), "tfidf_cluster_id"].unique()
+        final_df.loc[
+            (final_df["is_new"] == False) &
+            (final_df["is_third"] == False) &   # ★ 추가: 3차에서 새 라벨로 바뀐 것 제외
+            (final_df["tfidf_cluster_id"] != -1),
+            "tfidf_cluster_id"
+        ].unique()
     )
 
     # (b) 3차 재군집(third=True)으로 새로 생긴 클러스터들 (기존엔 없었음)
     third_created_tfidf = set(
-        final_df.loc[(final_df["is_third"] == True) & (final_df["tfidf_cluster_id"] != -1), "tfidf_cluster_id"].unique()
+        final_df.loc[
+            (final_df["is_third"] == True) & 
+            (final_df["tfidf_cluster_id"] != -1), 
+            "tfidf_cluster_id"]
+            .unique()
     ) - preexisting_clusters
 
     # (c) 신규(new=True) 문서가 기존(preexisting) 클러스터에 합류한 케이스
     joined_existing_tfidf = set(
         final_df.loc[
             (final_df["is_new"] == True) &
-            (final_df["tfidf_cluster_id"] != -1) &
             (final_df["is_third"] == False) &
+            (final_df["tfidf_cluster_id"] != -1) &
             (final_df["tfidf_cluster_id"].isin(preexisting_clusters)),
             "tfidf_cluster_id"
         ].unique()
@@ -518,9 +560,6 @@ def run_clustering(final_df1000_path: str = "path/to/final_df1000.csv"):
     filename1 = f"data/commandr_summary{today_str}.csv"
     filename2 = f"data/commandr_articles{today_str}.csv"
 
-    # # 스키마 보장 (빈 파일이라도 헤더 생성)
-    # _ensure_articles_schema(articles_csv)
-    # _ensure_summary_schema(summary_csv)
     print(f"📝 요약 시작: {len(target_clusters)}개 클러스터, {len(target_df)}개 기사")
 
     run_summarization(
