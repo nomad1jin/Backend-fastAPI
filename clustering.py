@@ -9,15 +9,17 @@ from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer
 from collections import defaultdict
 from tqdm import tqdm
-tqdm.pandas()
 
+tqdm.pandas()
 
 ### 1.임베딩
 # 모델 로딩
 model = SentenceTransformer('jhgan/ko-sroberta-multitask')
 
+
 def get_embedding(text):
     return model.encode(text if isinstance(text, str) else "", convert_to_numpy=True)
+
 
 def embed_documents(df, text_column='text'):
     tqdm.write("💡 임베딩 시작")
@@ -26,7 +28,7 @@ def embed_documents(df, text_column='text'):
     return df
 
 
-###2. 1차 군집이자 새로운 데이터 군집 
+###2. 1차 군집이자 새로운 데이터 군집
 def run_dbscan_on_embeddings(df, eps=0.25, min_samples=3):
     embeddings = np.array(df['embedding'].tolist())
     db = DBSCAN(eps=eps, min_samples=min_samples, metric='cosine')
@@ -35,29 +37,30 @@ def run_dbscan_on_embeddings(df, eps=0.25, min_samples=3):
     return df, labels
 
 
-
-###3. 2차 군집 
+###3. 2차 군집
 def safe_eval(x):
     if isinstance(x, str):
         return ast.literal_eval(x)
     return x
 
+
 def get_tfidf_matrix(noun_lists, min_df=2, ngram_range=(1, 5),
-                     stop_words=["것","수","때","등","이번","오늘","기자","보도","사진"]):
+                     stop_words=["것", "수", "때", "등", "이번", "오늘", "기자", "보도", "사진"]):
     text = [" ".join(nouns) for nouns in noun_lists]
     vectorizer = TfidfVectorizer(min_df=min_df, ngram_range=ngram_range, stop_words=stop_words)
     return vectorizer.fit_transform(text).toarray()
 
+
 def run_2nd_tfidf_clustering(
-    df, cluster_col='embedding_cluster_id', noun_col='konlpy_nouns',
-    result_col='tfidf_cluster_id', flag_col='second',
-    eps=0.6, min_samples=3, min_docs=50, min_df=2, ngram_range=(1, 5)
+        df, cluster_col='embedding_cluster_id', noun_col='konlpy_nouns',
+        result_col='tfidf_cluster_id', flag_col='second',
+        eps=0.6, min_samples=3, min_docs=50, min_df=2, ngram_range=(1, 5)
 ):
     df = df.copy()
     df[noun_col] = df[noun_col].apply(safe_eval)
     df[result_col] = df[cluster_col]
     df[flag_col] = False
-    
+
     existing_max = df[cluster_col][df[cluster_col] != -1].max()
     current_cluster_id = (existing_max + 1) if pd.notnull(existing_max) else 0
 
@@ -81,9 +84,11 @@ def run_2nd_tfidf_clustering(
 
     return df
 
+
 import numpy as np
 from collections import defaultdict
 from tqdm import tqdm
+
 
 ### 5. 새로운 데이터 군집화하기 위한 df1000의 centroid 계산
 def compute_embedding_centroids_from_tfidf(df, embedding_col='embedding', cluster_col='tfidf_cluster_id'):
@@ -108,12 +113,12 @@ def compute_embedding_centroids_from_tfidf(df, embedding_col='embedding', cluste
     return centroids
 
 
-###5. 새로운 데이터 군집화 
+###5. 새로운 데이터 군집화
 def assign_new_docs_to_tfidf_cluster(new_df, centroids, threshold=0.85):
     new_df = new_df.copy()
     new_df['news_summary'] = new_df['news_summary'].apply(lambda x: x if isinstance(x, str) else "")
     new_df['embedding'] = new_df['news_summary'].progress_apply(get_embedding)
-    
+
     cluster_ids = list(centroids.keys())
     centroid_matrix = np.array([centroids[cid] for cid in cluster_ids])
 
@@ -127,10 +132,11 @@ def assign_new_docs_to_tfidf_cluster(new_df, centroids, threshold=0.85):
     new_df['assigned_tfidf_cluster'] = assigned_clusters
     return new_df
 
+
 def run_third_tfidf_on_noise(
-    df1000, new_df,
-    noun_col='konlpy_nouns',
-    eps=0.6, min_samples=2
+        df1000, new_df,
+        noun_col='konlpy_nouns',
+        eps=0.6, min_samples=2
 ):
     """
     - df1000: 2차까지 완료된 데이터 (tfidf_cluster_id 존재)
@@ -150,7 +156,7 @@ def run_third_tfidf_on_noise(
 
     # 1) 노이즈만 추출
     noise_1000 = df1000[df1000['tfidf_cluster_id'] == -1].copy()
-    noise_500  = new_df[new_df['assigned_tfidf_cluster'] == -1].copy()
+    noise_500 = new_df[new_df['assigned_tfidf_cluster'] == -1].copy()
 
     # 2) 결합
     toks_all = noise_1000[noun_col].apply(safe_eval).tolist() + \
@@ -161,7 +167,7 @@ def run_third_tfidf_on_noise(
     if len(noise_all) < min_samples:
         print("대상 수가 min_samples 미만이라 스킵합니다.")
         return df1000, new_df
-        
+
     # 3) TF-IDF 행렬 생성
     tfidf_mat = get_tfidf_matrix(toks_all)
 
@@ -203,6 +209,7 @@ def run_third_tfidf_on_noise(
                 new_df.at[idx, 'third'] = True
 
     return df1000, new_df
+
 
 def merge_cluster_third_results(df1000, new_df):
     """
@@ -250,6 +257,7 @@ def merge_cluster_third_results(df1000, new_df):
     final_df.to_csv("final_clustering.csv", index=False, encoding='utf-8-sig')
 
     return final_df
+
 
 # ==== 3차 군집: TF-IDF + DBSCAN으로 노이즈(-1)만 재군집 ====
 # def third_stage_dbscan_on_noise(
@@ -331,7 +339,7 @@ def merge_cluster_third_results(df1000, new_df):
 #     return df_total, df_latest
 
 
-# ###6. 최종 결과 final_df 
+# ###6. 최종 결과 final_df
 # def merge_cluster_results(df1000, new_df):
 #     # df1000_export = df1000.copy()
 #     df1000_export = df1000.copy().reset_index(drop=True)
@@ -399,15 +407,15 @@ def assign_cluster_ids_with_df1000_seed(final_df: pd.DataFrame) -> pd.DataFrame:
 
 
 import os
-from datetime import datetime 
+from datetime import datetime
 from preprocessing import preprocess_df
 from summarizer import run_summarization
 from utils import get_mysql_engine, get_cohere_api_key
 from sqlalchemy import text
 
-
 # ===== 군집 =====
 ENGINE = None  # 전역 엔진 재사용
+
 
 def run_clustering(final_df1000_path: str = "path/to/final_df1000.csv"):
     global ENGINE
@@ -438,27 +446,27 @@ def run_clustering(final_df1000_path: str = "path/to/final_df1000.csv"):
 
     print(f"📥 df500 로드 완료: {len(df500)}개 기사")
 
-# 3) 센트로이드/군집 배정
+    # 3) 센트로이드/군집 배정
     centroids = compute_embedding_centroids_from_tfidf(df1000)
     new_df = assign_new_docs_to_tfidf_cluster(df500, centroids)
 
     # 3차 군집화 실행
     df1000, new_df = run_third_tfidf_on_noise(
-        df1000,             # 기존 데이터
-        new_df,             # 신규 데이터
+        df1000,  # 기존 데이터
+        new_df,  # 신규 데이터
         noun_col='konlpy_nouns',  # 이미 토큰화된 명사 리스트 컬럼명
-        eps=0.6,             # DBSCAN 파라미터
-        min_samples=2        # DBSCAN 파라미터
+        eps=0.6,  # DBSCAN 파라미터
+        min_samples=2  # DBSCAN 파라미터
     )
 
-    # 5) 합치기 
+    # 5) 합치기
     final_df = merge_cluster_third_results(df1000, new_df)
 
     # 6) DB에서 현재 cluster_id 최대값 읽기
     if ENGINE:
         with ENGINE.connect() as conn:
             result = conn.execute(text("SELECT MAX(id) FROM topic"))
-            max_cluster_id = result.scalar() 
+            max_cluster_id = result.scalar()
     else:
         max_cluster_id = 0
     print(f"현재 DB 최대 cluster_id: {max_cluster_id}")
@@ -467,7 +475,6 @@ def run_clustering(final_df1000_path: str = "path/to/final_df1000.csv"):
     final_df = assign_cluster_ids_with_df1000_seed(final_df)
 
     print(f"변환 후 cluster_id 범위: {final_df['cluster_id'].min()} ~ {final_df['cluster_id'].max()}")
-
 
     # 8) 요약 대상 cluster_id 선정  🔧 (3차로 '새로 생긴' + 기존에 '합류'한)
     # (a) 기존에 df1000 쪽에 존재하던 클러스터(노이즈 제외)
@@ -511,14 +518,13 @@ def run_clustering(final_df1000_path: str = "path/to/final_df1000.csv"):
     filename1 = f"data/commandr_summary{today_str}.csv"
     filename2 = f"data/commandr_articles{today_str}.csv"
 
-
     # # 스키마 보장 (빈 파일이라도 헤더 생성)
     # _ensure_articles_schema(articles_csv)
     # _ensure_summary_schema(summary_csv)
     print(f"📝 요약 시작: {len(target_clusters)}개 클러스터, {len(target_df)}개 기사")
 
     run_summarization(
-        target_df,             # ✅ 이번에 필요한 군집만 전달
+        target_df,  # ✅ 이번에 필요한 군집만 전달
         "cluster_id",
         api_key,
         ENGINE,

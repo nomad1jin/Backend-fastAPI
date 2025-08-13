@@ -1,17 +1,19 @@
 # attach_cluster_images_naver.py (debug-heavy)
+import logging
 import os
 import pathlib
+import random
 import re
-import traceback
+import time
 import uuid
 from urllib.parse import urlsplit, unquote
 
 import boto3
-import logging
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
+from requests.adapters import HTTPAdapter
 
 # # ---------- 로깅 ----------
 # LOG_DIR = pathlib.Path(__file__).parent / "logs"
@@ -44,6 +46,28 @@ HEADERS = {
     "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
 }
 
+
+SESSION = requests.Session()
+SESSION.headers.update(HEADERS)
+
+# 연결 재시도(네트워크 오류) – 상태코드 기반 X, 우리는 수동 백오프를 병행
+SESSION.mount("https://", HTTPAdapter(pool_connections=20, pool_maxsize=50))
+SESSION.mount("http://", HTTPAdapter(pool_connections=20, pool_maxsize=50))
+
+def sleep_backoff(attempt: int, base: float = 0.7, cap: float = 10.0):
+    delay = min(cap, base * (2 ** (attempt - 1))) + random.uniform(0, 0.4)
+    time.sleep(delay)
+
+def respect_retry_after(resp: requests.Response):
+    ra = resp.headers.get("Retry-After")
+    if not ra:
+        return
+    try:
+        wait = int(ra)
+    except ValueError:
+        wait = 3
+    time.sleep(min(wait, 30))
+
 def safe_filename_from_url(img_url: str) -> str:
     base = os.path.basename(urlsplit(img_url).path)
     base = unquote(base)
@@ -56,51 +80,78 @@ def _pick_from_srcset(val: str) -> str | None:
     if not parts: return None
     return parts[-1].split()[0]  # "url 640w" -> "url"
 
-def get_naver_image_url(news_url: str, timeout: int = 10) -> str | None:
-    try:
-        log.info(f"  [REQ] {news_url}")
-        resp = requests.get(news_url, headers=HEADERS, timeout=timeout)
-        log.info(f"  [RESP] status={resp.status_code}, len={len(resp.text)}")
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "lxml")
+def get_naver_image_url(news_url: str, timeout: int = 10, max_attempts: int = 5) -> str | None:
+    last_exc = None
+    html = None
 
-        tag = soup.select_one("img#img1")
-        cand = None
-        if tag:
-            log.info("  [ATTRS] img#img1 attrs=%s", dict(tag.attrs))
-            # lazy-load 속성 우선 검사
-            for attr in ("src", "currentSrc", "data-src", "data-lazysrc", "data-origin-src"):
-                v = tag.get(attr)
-                if v:
-                    cand = v
-                    break
-            if not cand:
-                cand = _pick_from_srcset(tag.get("srcset")) or _pick_from_srcset(tag.get("data-srcset"))
+    for attempt in range(1, max_attempts + 1):
+        try:
+            log.info("  [REQ] %s (attempt %d/%d)", news_url, attempt, max_attempts)
+            resp = SESSION.get(news_url, timeout=timeout)
+            log.debug("  [RESP] status=%s, len=%s", resp.status_code, len(resp.text or ""))
+            if resp.status_code == 200:
+                html = resp.text
+                break
+            if resp.status_code == 429:
+                log.warning("  [429] Too Many Requests: %s", news_url)
+                respect_retry_after(resp)
+                sleep_backoff(attempt)
+                continue
+            if 500 <= resp.status_code < 600:
+                log.warning("  [5xx] %s -> backoff", resp.status_code)
+                sleep_backoff(attempt)
+                continue
+            if resp.status_code == 404:
+                log.warning("  [404] %s", news_url)
+                return None
+            # 기타 상태코드는 잠깐 대기 후 재시도
+            sleep_backoff(attempt)
+        except requests.RequestException as e:
+            last_exc = e
+            log.debug("  [NETERR] %s", e)
+            sleep_backoff(attempt)
 
-        # 메타 폴백
-        if not cand:
-            og = soup.find("meta", property="og:image")
-            if og and og.get("content"):
-                cand = og["content"]
-        if not cand:
-            tw = soup.find("meta", attrs={"name": "twitter:image"})
-            if tw and tw.get("content"):
-                cand = tw["content"]
-
-        if not cand:
-            log.warning("  [MISS] no usable image url")
-            return None
-
-        if cand.startswith("//"):
-            cand = "https:" + cand
-        if not cand.startswith("http"):
-            log.warning("  [BAD_SRC] not http: %s", cand)
-            return None
-        log.info(f"  [FOUND] image={cand}")
-        return cand
-    except Exception as e:
-        log.error("  [ERR] get_naver_image_url: %s\n%s", e, traceback.format_exc())
+    if html is None:
+        if last_exc:
+            log.error("  [ERR] get_naver_image_url: %s", last_exc)
+        else:
+            log.error("  [ERR] get_naver_image_url: no html")
         return None
+
+    soup = BeautifulSoup(html, "lxml")
+
+    # 1) 네이버 기본 대표 이미지
+    cand = None
+    tag = soup.select_one("img#img1, div#img1 img")
+    if tag:
+        for attr in ("src", "currentSrc", "data-src", "data-lazysrc", "data-origin-src"):
+            v = tag.get(attr)
+            if v:
+                cand = v
+                break
+        if not cand:
+            cand = _pick_from_srcset(tag.get("srcset")) or _pick_from_srcset(tag.get("data-srcset"))
+
+    # 2) og:image / twitter:image
+    if not cand:
+        og = soup.find("meta", property="og:image")
+        if og and og.get("content"): cand = og["content"]
+    if not cand:
+        tw = soup.find("meta", attrs={"name": "twitter:image"})
+        if tw and tw.get("content"): cand = tw["content"]
+
+    if not cand:
+        log.info("  [MISS] image not found in %s", news_url)
+        return None
+
+    if cand.startswith("//"):
+        cand = "https:" + cand
+    if not cand.startswith("http"):
+        log.warning("  [BAD_SRC] not http: %s", cand)
+        return None
+
+    log.info("  [FOUND] image=%s", cand)
+    return cand
 
 def upload_image_to_s3(img_url: str, cluster_id) -> str | None:
     try:
