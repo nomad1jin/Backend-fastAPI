@@ -171,7 +171,7 @@ def collect_article_links(driver, last_seen_news_link):
                 if len(article_links) % 100 == 0:
                     print(f"[{len(article_links)}] {title} → {href}")
 
-                MAX_TEST_LINKS = 10  # 테스트 시 수집할 최대 링크 수
+                MAX_TEST_LINKS = 100  # 테스트 시 수집할 최대 링크 수
 
                 # ✅ 테스트 모드: 일정 개수 넘으면 수집 중단
                 if MAX_TEST_LINKS and len(article_links) >= MAX_TEST_LINKS:

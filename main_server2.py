@@ -100,7 +100,7 @@ from crawler import run_crawling
 from notification_ping import send_ping
 
 BASE_DIR = Path(__file__).resolve().parent
-FINAL_DF1000_PATH = BASE_DIR / "df1000_result_3.csv"  # df1000
+FINAL_DF1000_PATH = BASE_DIR / "df1000_result0813.csv"  # df1000
 INTERVAL_MIN = int(os.getenv("CRAWL_INTERVAL_MINUTES", "5"))
 INTERVAL_SEC = INTERVAL_MIN * 60
 CLUSTER_DELAY_SEC = int(os.getenv("CLUSTER_DELAY_SECONDS", "30"))

@@ -495,11 +495,8 @@ def run_summarization(
                     summary_csv=summary_csv_path,
                     out_summary_csv=summary_csv_path,
                 )
+                wait_for_image_urls(summary_csv_path, timeout=10)
                 print(f"✅ 이미지 처리 완료")
-
-                # ★★★ 이미지 주입 후 반드시 재로드(대기)해서 non-empty 보장
-                wait_ids = summ_test["cluster_id"].astype(int).unique().tolist()
-                summ_test = wait_for_image_urls(summary_csv_path, wait_ids=wait_ids, timeout=6.0, interval=0.2)
 
             else:
                 print(f"⚠️ CSV 파일에 데이터가 없어 이미지 처리 스킵")
