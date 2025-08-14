@@ -94,15 +94,13 @@ def make_commandr_summary_cohere(cluster_df, cluster_id, api_key):
     return call_commandr_cohere(prompt, api_key)
 
 
-def match_articles_from_csv(df, article_titles, cluster_id):
+def match_articles_from_csv(df, article_titles, cluster_id, cluster_col="cluster_id"):
     """CSV에서 제목을 매칭하여 완전한 기사 정보 추출"""
+    cluster_df = df[df[cluster_col] == cluster_id].copy()  # ← 하드코딩 제거
+
     cluster_articles = []
-    cluster_df = df[df['cluster_id'] == cluster_id].copy()  #### cluster_id로 수정했음
-
     for title in article_titles:
-        # 정확한 매칭만 시도
         matched = cluster_df[cluster_df['title'] == title]
-
         if not matched.empty:
             row = matched.iloc[0]
             cluster_articles.append({
@@ -115,9 +113,9 @@ def match_articles_from_csv(df, article_titles, cluster_id):
                 "is_new": int(row.get('is_new', 0)),
                 "is_third": int(row.get('is_third', 0)),
             })
-
     print(f"✅ 최종 매칭된 기사: {len(cluster_articles)}개")
     return cluster_articles
+
 
 
 def safe_json_parse(summary_result):
@@ -190,8 +188,8 @@ def _ensure_summary_schema(path):
         print(f"✅ 요약 CSV 스키마 파일 생성: {path}")
 
 
-def save_commandr_output_to_csv(df, summary_result, cluster_id, summary_csv_path, articles_csv_path):
-    """CSV 저장 함수 - 파일 생성 보장 및 디버깅 강화"""
+def save_commandr_output_to_csv(df, summary_result, cluster_id, summary_csv_path, articles_csv_path,
+                                cluster_col="cluster_id"):
     print(f"\n💾 save_commandr_output_to_csv 시작 - cluster_id: {cluster_id}")
 
     summary_data = safe_json_parse(summary_result)
@@ -205,7 +203,6 @@ def save_commandr_output_to_csv(df, summary_result, cluster_id, summary_csv_path
     _ensure_articles_schema(articles_csv_path)
     _ensure_summary_schema(summary_csv_path)
 
-    # 요약 CSV 한 줄
     summary_row = {
         "cluster_id": int(summary_data.get("cluster_id", cluster_id)),
         "summary_time": summary_data.get("summary_time", datetime.now().strftime("%Y-%m-%d %H:%M")),
@@ -214,10 +211,9 @@ def save_commandr_output_to_csv(df, summary_result, cluster_id, summary_csv_path
         "image_url": ""
     }
 
-    # 기사 매칭
     article_titles = summary_data.get("article_titles", [])
     print(f"🔍 기사 매칭 시작 - 대상 제목: {len(article_titles)}개")
-    matched_articles = match_articles_from_csv(df, article_titles, cluster_id)
+    matched_articles = match_articles_from_csv(df, article_titles, cluster_id, cluster_col=cluster_col)  # ← 여기
     print(f"🔍 매칭 완료 - 결과: {len(matched_articles)}개")
 
     # 기사 데이터 준비
@@ -274,74 +270,6 @@ def save_commandr_output_to_csv(df, summary_result, cluster_id, summary_csv_path
         import traceback
         traceback.print_exc()
 
-
-# def save_commandr_output_to_csv(df, summary_result, cluster_id, summary_csv_path, articles_csv_path):
-#     summary_data = safe_json_parse(summary_result)
-#     if not summary_data:
-#         print(f"❌ 클러스터 {cluster_id}: JSON 파싱 실패")
-#         save_failed_json(cluster_id, summary_result)
-#         return
-
-#     # ✅ 파일이 없으면 아예 스키마 고정 헤더로 먼저 생성
-#     if not os.path.exists(articles_csv_path):
-#         cols = ["cluster_id","title","news_link","press","publish_date","news_summary","is_new","is_third"]
-#         pd.DataFrame(columns=cols).to_csv(articles_csv_path, index=False, encoding="utf-8-sig")
-
-
-#     # 요약 CSV 한 줄
-#     summary_row = {
-#         "cluster_id": int(summary_data.get("cluster_id", cluster_id)),
-#         "summary_time": summary_data.get("summary_time", datetime.now().strftime("%Y-%m-%d %H:%M")),
-#         "topic_name": summary_data.get("topic_name", ""),
-#         "ai_summary": summary_data.get("ai_summary", "")
-#         # ⚠ topic의 대표이미지는 별도 로직(attach_cluster_images / topic 업데이트)에서 처리
-#     }
-
-#     # 기사 매칭 (여기서 is_new/is_third까지 들어옴)!!!!!!!!
-#     article_titles = summary_data.get("article_titles", [])
-#     matched_articles = match_articles_from_csv(df, article_titles, cluster_id)
-
-#     # ✅ news_summary 포함 / image_url 제거
-#     article_rows = []
-#     for a in matched_articles:
-#         article_rows.append({
-#             "cluster_id": int(summary_data.get("cluster_id", cluster_id)),
-#             "title": a.get("title"),
-#             "news_link": a.get("news_link"),
-#             "press": a.get("press"),
-#             "publish_date": a.get("publish_date"),
-#             "news_summary": a.get("news_summary", ""),  #있는데 뭐지
-#             "is_new": int(a.get("is_new", 0)),       # --- ADD
-#             "is_third": int(a.get("is_third", 0)),   # --- ADD
-#         })
-
-#     # 저장
-#     pd.DataFrame([summary_row]).to_csv(
-#         summary_csv_path, mode="a", header=not os.path.exists(summary_csv_path),
-#         index=False, encoding="utf-8-sig"
-#     )
-
-#     # 요약 CSV 저장은 그대로 두고, 기사 CSV 저장 블록만 교체
-#     if article_rows:
-#         pd.DataFrame(article_rows, columns=[
-#             "cluster_id","title","news_link","press","publish_date","news_summary","is_new","is_third"
-#         ]).to_csv(
-#             articles_csv_path, mode="a", header=not os.path.exists(articles_csv_path),
-#             index=False, encoding="utf-8-sig"
-#         )
-#     else:
-#         # ✅ 매칭 0건이어도 다음 단계가 터지지 않도록 헤더만 보장
-#         _ensure_articles_schema(articles_csv_path)
-
-#     print(f"클러스터 {cluster_id} 저장 완료")
-
-#         # 저장 끝난 뒤 가드 로그
-#     for p in (summary_csv_path, articles_csv_path):
-#         try:
-#             print(f"[CSV_WRITE] {p} exists={os.path.exists(p)} size={os.path.getsize(p) if os.path.exists(p) else -1}")
-#         except Exception as e:
-#             print(f"[CSV_WRITE_ERR] {p} err={e}")
-
 '''
 삽입 전 내부 중복 제거
 news_df.drop_duplicates(subset=["title","news_link"])로 메모리 상에서 한 번 정리.
@@ -351,7 +279,7 @@ DB에 이미 있는 것 제외
 '''
 
 
-def save_commandr_output_to_db(df, summary_result, cluster_id, engine):
+def save_commandr_output_to_db(df, summary_result, cluster_id, engine, cluster_col="cluster_id"):
     if engine is None:
         print("⚠️ engine=None: DB 저장 스킵")
         return
@@ -389,7 +317,7 @@ def save_commandr_output_to_db(df, summary_result, cluster_id, engine):
 
     # 4) 기사 매칭
     article_titles = summary_data.get("article_titles", []) or []
-    matched_articles = match_articles_from_csv(df, article_titles, cid)
+    matched_articles = match_articles_from_csv(df, article_titles, cid, cluster_col=cluster_col)
     print(f"[DB_PREVIEW] topic_id={cid} matched={len(matched_articles)} "
           f"sample={[{'title': a.get('title'), 'link': a.get('news_link')} for a in matched_articles[:3]]}")
 
@@ -526,16 +454,17 @@ def run_summarization(
             if summary_result and not summary_result.startswith("[요약 실패"):
                 save_commandr_output_to_csv(
                     df, summary_result, cluster_id,
-                    summary_csv_path, articles_csv_path
+                    summary_csv_path, articles_csv_path,
+                    cluster_col=cluster_col   # ← 추가
                 )
                 processed_count += 1
             else:
                 print(f"❌ 클러스터 {cluster_id}: API 요청 실패")
-                log_failed_cluster(cluster_id)
+                # log_failed_cluster(cluster_id)
 
         except Exception as e:
             print(f"❌ 클러스터 {cluster_id} 요약 실패: {e}")
-            log_failed_cluster(cluster_id)
+            # log_failed_cluster(cluster_id)
             continue
 
     print(f"\n✅ 요약 완료: {processed_count}/{len(large_clusters)}개 클러스터 처리")
@@ -668,95 +597,7 @@ def upsert_topic_images_from_summary(engine, summary_csv_path: str):
         print("[TOPIC_IMG][UPDATE] 업데이트할 이미지 없음")
 
 
-# def insert_news_from_csv(engine, articles_csv_path, summary_csv_path):
-#     # 0) 로드
-#     print(f"🔄 insert_news_from_csv 시작...")
-#     print(f"   articles_csv: {articles_csv_path}")
-#     print(f"   summary_csv: {summary_csv_path}")
 
-#     try:
-#         arts = pd.read_csv(articles_csv_path)     # cols: cluster_id,title,news_link,press,publish_date,news_summary
-#         summ = pd.read_csv(summary_csv_path)      # cols: cluster_id,topic_name,ai_summary,summary_time,(image_url: topic 대표이미지—별도 처리)
-#         print(f"📊 로드 완료 - arts: {len(arts)}행, summ: {len(summ)}행")
-#     except Exception as e:
-#         print(f"❌ CSV 로드 실패: {e}")
-#         return
-
-#     print(f"[CSV->DB] load arts={articles_csv_path}, summ={summary_csv_path}")
-#     print(f"[CSV->DB] arts_rows={len(arts)} summ_rows={len(summ)}")
-
-#     # ✅ 스키마 보강 (이전 버전 헤더로 만들어진 파일 대비)
-#     for col, default in {"news_summary": "", "is_new": 0, "is_third": 0}.items():
-#         if col not in arts.columns:
-#             arts[col] = default
-
-#     # 1) topic UPSERT (없으면 insert)
-#     topics_df = summ.rename(columns={"cluster_id": "id"})[["id","topic_name","ai_summary","summary_time"]].drop_duplicates(subset=["id"])
-#     try:
-#         existing = pd.read_sql("SELECT id FROM topic", engine)
-#         exist_ids = set(pd.to_numeric(existing["id"], errors="coerce").dropna().astype(int).tolist())
-#     except Exception as e:
-#         print(f"[TOPIC_EXIST_ERR] {e} → topic 테이블이 비었거나 최초일 수 있음")
-#         exist_ids = set()
-
-#     new_topics = topics_df[~topics_df["id"].astype(int).isin(exist_ids)].copy()
-#     if len(new_topics) > 0:
-#         new_topics.to_sql("topic", engine, index=False, if_exists="append")
-#         print(f"[TOPIC_INSERT] inserted={len(new_topics)} sample={new_topics.head(3).to_dict(orient='records')}")
-#     else:
-#         print("[TOPIC_INSERT] 신규 없음")
-
-#     # 2) (이미지 머지 제거) 바로 기사 정리
-#     merged = arts.drop_duplicates(subset=["cluster_id","title","news_link"]).copy()
-
-#     # 3) FK 정합성
-#     try:
-#         existing = pd.read_sql("SELECT id FROM topic", engine)
-#         valid_topic_ids = set(pd.to_numeric(existing["id"], errors="coerce").dropna().astype(int).tolist())
-#     except Exception as e:
-#         print(f"[TOPIC_RELOAD_ERR] {e}")
-#         valid_topic_ids = set()
-
-#     merged["topic_id"] = merged["cluster_id"].astype(int)
-#     before_rows = len(merged)
-#     merged = merged[merged["topic_id"].isin(valid_topic_ids)].copy()
-#     print(f"[CLEAN_FK] before={before_rows} after={len(merged)} dropped={before_rows-len(merged)}")
-
-#     # 4) news_link 이상치 제거
-#     bad_link_mask = ~merged["news_link"].astype(str).str.startswith("http")
-#     if bad_link_mask.any():
-#         bad_sample = merged[bad_link_mask][["topic_id","title","news_link"]].head(5).to_dict(orient="records")
-#         print(f"[BAD_LINK_DROP] rows={bad_link_mask.sum()} sample={bad_sample}")
-#         merged = merged[~bad_link_mask]
-
-#     # 5) 중복 제거
-#     try:
-#         existing_news = pd.read_sql("SELECT topic_id,title,news_link FROM news", engine)
-#         merged = merged.merge(existing_news, on=["topic_id","title","news_link"], how="left", indicator=True)
-#         merged = merged[merged["_merge"]=="left_only"].drop(columns=["_merge"])
-#     except Exception as e:
-#         print(f"[NEWS_EXIST_ERR] {e} → news 첫 삽입일 수 있음")
-
-#     # 6) 최종 삽입 (✅ image_url 제외, ✅ news_summary 포함)
-#     to_ins = merged[[
-#         "topic_id","title","news_link","press","publish_date","news_summary",
-#         "is_new","is_third"  # ← ADD
-#     ]].copy()
-#     print(f"[DB_INSERT_READY] rows={len(to_ins)} sample={to_ins[['topic_id','title']].head(5).to_dict(orient='records')}")
-
-#     if len(to_ins) > 0:
-#         try:
-#             to_ins.to_sql("news", engine, index=False, if_exists="append")
-#             print(f"[CSV->DB] news insert rows={len(to_ins)} ✅")
-#         except Exception as e:
-#             print(f"[CSV->DB_ERR] insert failed: {e}")
-#             for i, row in to_ins.iterrows():
-#                 try:
-#                     pd.DataFrame([row]).to_sql("news", engine, index=False, if_exists="append")
-#                 except Exception as ee:
-#                     print(f"[ROW_FAIL] topic_id={row['topic_id']} title={row['title'][:50]} err={ee}")
-#     else:
-#         print("[CSV->DB] 신규 없음")
 def insert_news_from_csv(engine, articles_csv_path, summary_csv_path):
     print(f"\n🔄 insert_news_from_csv 시작...")
     print(f"   articles_csv: {articles_csv_path}")
@@ -882,7 +723,8 @@ def insert_news_from_csv(engine, articles_csv_path, summary_csv_path):
 
 def retry_failed_clusters_from_json(df, failed_json_path="data/failed_responses.jsonl",
                                     summary_csv_path="data/commandr_summary.csv",
-                                    articles_csv_path="data/commandr_articles.csv"):
+                                    articles_csv_path="data/commandr_articles.csv",
+                                    cluster_col="tfidf_cluster_id"):
     """실패한 클러스터 재처리"""
     if not os.path.exists(failed_json_path):
         print("실패한 JSON 파일이 없습니다.")
@@ -900,8 +742,8 @@ def retry_failed_clusters_from_json(df, failed_json_path="data/failed_responses.
     unique_clusters = list(set(failed_clusters))
     print(f"재처리 대상: {len(unique_clusters)}개 클러스터")
 
-    for cluster_id in tqdm(unique_clusters, desc="재처리 중"):  # tqdm 추가
-        cluster_df = df[df['tfidf_cluster_id'] == cluster_id]
+    for cluster_id in tqdm(unique_clusters, desc="재처리 중"):
+        cluster_df = df[df[cluster_col] == cluster_id]
         if len(cluster_df) < 2:
             continue
 
