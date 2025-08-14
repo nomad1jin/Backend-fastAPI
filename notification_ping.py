@@ -16,6 +16,7 @@ TIMEOUT   = (3.0, 10.0)  # (connect, read) seconds
 VERIFY_SSL = True
 
 # 세션
+def _build_session() -> requests.Session:
     s = requests.Session()
     retries = Retry(
         total=5,                # 총 재시도 횟수
