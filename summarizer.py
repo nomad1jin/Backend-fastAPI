@@ -98,6 +98,10 @@ def match_articles_from_csv(df, article_titles, cluster_id, cluster_col="cluster
     """CSV에서 제목을 매칭하여 완전한 기사 정보 추출"""
     cluster_df = df[df[cluster_col] == cluster_id].copy()  # ← 하드코딩 제거
 
+    # 🔍 디버그 출력: 요약이 준 제목 vs 실제 DF 제목
+    print("[DEBUG] predicted titles:", article_titles)
+    print("[DEBUG] cluster_df titles:", cluster_df['title'].head(10).tolist())
+
     cluster_articles = []
     for title in article_titles:
         matched = cluster_df[cluster_df['title'] == title]
@@ -232,6 +236,7 @@ def save_commandr_output_to_csv(df, summary_result, cluster_id, summary_csv_path
 
     print(f"📝 저장할 데이터 - summary: 1행, articles: {len(article_rows)}행")
 
+
     # 요약 저장
     try:
         pd.DataFrame([summary_row]).to_csv(
@@ -252,11 +257,27 @@ def save_commandr_output_to_csv(df, summary_result, cluster_id, summary_csv_path
         if article_rows:
             file_exists = os.path.exists(articles_csv_path)
 
-            pd.DataFrame(article_rows).to_csv(
+            # ✅ 쓰기 전 정렬 (cluster_id, publish_date 오름차순)
+            arts_df = pd.DataFrame(article_rows)
+
+            # publish_date 문자열 → 정규화
+            def _parse_dt(s):
+                for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+                    try:
+                        return pd.to_datetime(s, format=fmt)
+                    except Exception:
+                        pass
+                return pd.to_datetime(s, errors="coerce")
+            arts_df["_pub"] = arts_df["publish_date"].apply(_parse_dt)
+
+            arts_df = arts_df.sort_values(["cluster_id", "_pub", "title"], ascending=[True, True, True]).drop(columns=["_pub"])
+
+            arts_df.to_csv(
                 articles_csv_path, mode="a", header=not file_exists,
                 index=False, encoding="utf-8-sig"
             )
-            print(f"✅ 기사 저장 완료: {cluster_id} ({len(article_rows)}건)")
+            print(f"✅ 기사 저장 완료: {cluster_id} ({len(arts_df)}건)")
+
 
             # 저장 후 즉시 확인
             test_arts = pd.read_csv(articles_csv_path)
