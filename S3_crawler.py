@@ -206,12 +206,6 @@ def attach_cluster_images(
         summ = pd.DataFrame({"cluster_id": sorted(art["cluster_id"].unique())})
         summ["image_url"] = None
 
-
-
-
-
-
-
     # 1) 스킵할 클러스터 계산 부분 교체
     def is_empty(v):
         if v is None:
@@ -248,6 +242,7 @@ def attach_cluster_images(
             s3_url = upload_image_to_s3(img_url, cluster_id=cid)
             if s3_url:
                 log.info(f"[CLUSTER_IMG_CHOSEN] cid={cid} s3={s3_url}")
+                break
             else:
                 log.warning(f"[CLUSTER_IMG_MISS] cid={cid}: 모든 기사에서 이미지 확보 실패")
 
