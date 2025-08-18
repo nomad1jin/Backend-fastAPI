@@ -51,10 +51,8 @@ def delete_10_data():
     df.to_csv(file_path, index=False, encoding="utf-8-sig")
     print(f"🗑 최신 데이터 10개 삭제 완료 → 남은 행 수: {len(df)}")
 
-
 def create_driver():
     options = Options()
-    options.binary_location = os.environ.get("CHROME_BIN", "/usr/bin/chromium")
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
@@ -63,8 +61,32 @@ def create_driver():
     options.add_argument("--lang=ko-KR")
     options.add_experimental_option("prefs", {"intl.accept_languages": "ko,ko_KR"})
 
-    service = Service(os.environ.get("CHROMEDRIVER_PATH", "/usr/bin/chromedriver"))
-    return webdriver.Chrome(service=service, options=options)
+    # 환경변수 있을 때만 지정 (없으면 Selenium이 자동 탐색)
+    chrome_bin = os.getenv("CHROME_BIN")
+    if chrome_bin:
+        options.binary_location = chrome_bin
+
+    chromedriver_path = os.getenv("CHROMEDRIVER_PATH")
+    if chromedriver_path and os.path.exists(chromedriver_path):
+        service = Service(chromedriver_path)
+        return webdriver.Chrome(service=service, options=options)
+    else:
+        # 경로 지정 안 하면 Selenium Manager가 드라이버를 자동으로 받음/사용
+        return webdriver.Chrome(options=options)
+
+# def create_driver():
+#     options = Options()
+#     options.binary_location = os.environ.get("CHROME_BIN", "/usr/bin/chromium")
+#     options.add_argument("--headless=new")
+#     options.add_argument("--no-sandbox")
+#     options.add_argument("--disable-dev-shm-usage")
+#     options.add_argument("--disable-gpu")
+#     options.add_argument("--window-size=1280,1696")
+#     options.add_argument("--lang=ko-KR")
+#     options.add_experimental_option("prefs", {"intl.accept_languages": "ko,ko_KR"})
+
+#     service = Service(os.environ.get("CHROMEDRIVER_PATH", "/usr/bin/chromedriver"))
+#     return webdriver.Chrome(service=service, options=options)
 
 # 전처리
 def preprocess_before_save(df: pd.DataFrame) -> pd.DataFrame:
@@ -88,9 +110,26 @@ def preprocess_before_save(df: pd.DataFrame) -> pd.DataFrame:
                 .apply(clean_content)
             )
 
-    # 날짜 문자열 → datetime (publish_dt)
+    # 날짜 문자열 → datetime 변환 (publish_date) 수정!!!!!!!!!!!!!!!
+    if "datetime" not in df.columns and "publish_date" in df.columns:
+        df["datetime"] = df["publish_date"]  # 기존 로직 유지 (과거 호환)
+
+    parsed = None
     if "datetime" in df.columns:
-        df["publish_date"] = df["datetime"].apply(convert_korean_datetime)
+        parsed = df["datetime"].apply(convert_korean_datetime)
+
+    # ✅ 백업 경로: datetime_sort(ISO) 있으면 거기로 채우기
+    if "datetime_sort" in df.columns:
+        iso = pd.to_datetime(df["datetime_sort"], errors="coerce")
+        # 우선순위: parsed(성공) > iso
+        df["publish_date"] = pd.to_datetime(parsed, errors="coerce")
+        df.loc[df["publish_date"].isna(), "publish_date"] = iso
+    else:
+        df["publish_date"] = pd.to_datetime(parsed, errors="coerce")
+
+    # 문자열로 정규화 (DB 저장용)
+    df["publish_date"] = df["publish_date"].dt.strftime("%Y-%m-%d %H:%M")
+
 
     # 명사 리스트 추출용 텍스트 구성(title + summary)
     df["__text_for_nouns"] = (
@@ -106,7 +145,7 @@ def preprocess_before_save(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 def load_previous_data(collected_path, total_path):
-    delete_10_data()
+    # delete_10_data()
     try:
         if os.path.exists(collected_path):
             df = pd.read_csv(collected_path)
@@ -171,7 +210,7 @@ def collect_article_links(driver, last_seen_news_link):
                 if len(article_links) % 100 == 0:
                     print(f"[{len(article_links)}] {title} → {href}")
 
-                MAX_TEST_LINKS = 100  # 테스트 시 수집할 최대 링크 수
+                MAX_TEST_LINKS = 200  # 테스트 시 수집할 최대 링크 수
 
                 # ✅ 테스트 모드: 일정 개수 넘으면 수집 중단
                 if MAX_TEST_LINKS and len(article_links) >= MAX_TEST_LINKS:

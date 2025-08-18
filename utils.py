@@ -21,7 +21,7 @@ def get_mysql_engine():
     user = os.getenv("MYSQL_USER")
     password = os.getenv("MYSQL_PASSWORD")
     host = os.getenv("MYSQL_HOST")
-    port = os.getenv("MYSQL_PORT", 3306)
+    port = os.getenv("MYSQL_PORT", 3307)
     db = os.getenv("MYSQL_DB")
 
     url = f"mysql+pymysql://{user}:{password}@{host}:{port}/{db}"
