@@ -693,9 +693,26 @@ def insert_news_from_csv(engine, articles_csv_path, summary_csv_path):
         if col not in arts.columns:
             arts[col] = default
 
+    # # topic UPSERT
+    # topics_df = summ.rename(columns={"cluster_id": "id"})[
+    #     ["id", "topic_name", "ai_summary", "summary_time"]].drop_duplicates(subset=["id"])
+    # try:
+    #     existing = pd.read_sql("SELECT id FROM topic", engine)
+    #     exist_ids = set(pd.to_numeric(existing["id"], errors="coerce").dropna().astype(int).tolist())
+    #     print(f"📋 기존 topic 개수: {len(exist_ids)}")
+    # except Exception as e:
+    #     print(f"ℹ️ topic 테이블 조회 실패: {e}")
+    #     exist_ids = set()
+
+    # new_topics = topics_df[~topics_df["id"].astype(int).isin(exist_ids)].copy()
+    # if len(new_topics) > 0:
+    #     new_topics.to_sql("topic", engine, index=False, if_exists="append")
+    #     print(f"✅ topic 삽입 완료: {len(new_topics)}개")
+    
     # topic UPSERT
     topics_df = summ.rename(columns={"cluster_id": "id"})[
-        ["id", "topic_name", "ai_summary", "summary_time"]].drop_duplicates(subset=["id"])
+        ["id", "topic_name", "ai_summary", "summary_time"]
+    ].drop_duplicates(subset=["id"])
     try:
         existing = pd.read_sql("SELECT id FROM topic", engine)
         exist_ids = set(pd.to_numeric(existing["id"], errors="coerce").dropna().astype(int).tolist())
@@ -704,10 +721,37 @@ def insert_news_from_csv(engine, articles_csv_path, summary_csv_path):
         print(f"ℹ️ topic 테이블 조회 실패: {e}")
         exist_ids = set()
 
+    # 1) 신규 INSERT
     new_topics = topics_df[~topics_df["id"].astype(int).isin(exist_ids)].copy()
     if len(new_topics) > 0:
         new_topics.to_sql("topic", engine, index=False, if_exists="append")
         print(f"✅ topic 삽입 완료: {len(new_topics)}개")
+
+    # 2) ✅ 기존 UPDATE (교체)
+    upd_topics = topics_df[topics_df["id"].astype(int).isin(exist_ids)].copy()
+    if len(upd_topics) > 0:
+        from sqlalchemy import text
+        with engine.begin() as conn:
+            total_upd = 0
+            for _, r in upd_topics.iterrows():
+                res = conn.execute(
+                    text("""
+                        UPDATE topic
+                           SET topic_name   = :topic_name,
+                               ai_summary   = :ai_summary,
+                               summary_time = :summary_time
+                         WHERE id = :id
+                    """),
+                    {
+                        "id": int(r["id"]),
+                        "topic_name": (r.get("topic_name") or ""),
+                        "ai_summary": (r.get("ai_summary") or ""),
+                        "summary_time": (r.get("summary_time") or datetime.now().strftime("%Y-%m-%d %H:%M")),
+                    }
+                )
+                total_upd += (res.rowcount or 0)
+        print(f"🟡 topic 업데이트 완료: {total_upd}건")
+
 
     # news 데이터 정리
     merged = arts.drop_duplicates(subset=["cluster_id", "title", "news_link"]).copy()
