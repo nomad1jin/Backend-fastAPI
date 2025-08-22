@@ -589,6 +589,8 @@ def run_summarization(
     else:
         print(f"⚠️ DB 엔진이 None이라 DB 저장 스킵")
 
+from sqlalchemy import text
+import pandas as pd
 
 def upsert_topic_images_from_summary(engine, summary_csv_path: str):
     summ = pd.read_csv(summary_csv_path)
@@ -599,51 +601,108 @@ def upsert_topic_images_from_summary(engine, summary_csv_path: str):
         print("[TOPIC_IMG] summary CSV에 image_url이 없습니다.")
         return
 
-    summ["image_url"] = _normalize_image_url_series(summ["image_url"]) # 추가
+    # 기존 동작 유지: 정규화는 그대로
+    summ["image_url"] = _normalize_image_url_series(summ["image_url"])
 
-    topics_df = (summ[["cluster_id", "topic_name", "ai_summary", "summary_time", "image_url"]]
-                 .rename(columns={"cluster_id": "id"})
-                 .drop_duplicates(subset=["id"]))
+    # 같은 cluster_id가 여러 줄이면 마지막만 (원 코드 스타일 유지)
+    topics_df = (summ[["cluster_id", "image_url"]]
+                 .drop_duplicates(subset=["cluster_id"], keep="last"))
 
-    # 기존 topic id 로드
-    try:
-        exist = pd.read_sql("SELECT id FROM topic", engine)
-        exist_ids = set(pd.to_numeric(exist["id"], errors="coerce").dropna().astype(int))
-    except Exception as e:
-        print(f"[TOPIC_IMG] 기존 topic 로드 실패: {e} → 최초 삽입일 수 있음")
-        exist_ids = set()
+    print("어디가 안돼?2222")
+    # UPDATE만 수행: 기존 row의 image_url이 비었을 때만 채움
+    rows = []
+    for _, r in topics_df.iterrows():
+        if pd.isna(r["cluster_id"]):
+            continue
+        rows.append({
+            "id": int(r["cluster_id"]),
+            "img": (r.get("image_url") or "").strip()
+        })
 
-    # 1) 신규 topic은 image_url 포함해서 INSERT
-    new_topics = topics_df[~topics_df["id"].astype(int).isin(exist_ids)].copy()
-    if len(new_topics) > 0:
-        new_topics.to_sql("topic", engine, index=False, if_exists="append")
-        print(f"[TOPIC_IMG][INSERT] rows={len(new_topics)} "
-              f"sample={new_topics[['id', 'image_url']].head(3).to_dict(orient='records')}")
-    else:
-        print("[TOPIC_IMG][INSERT] 신규 없음")
+    if not rows:
+        print("[TOPIC_IMG] 업데이트 대상 없음")
+        return
+    print("어디가 안돼333?")
+    stmt = text("""
+        UPDATE topic
+           SET image_url = CASE
+                             WHEN (image_url IS NULL OR image_url = '' OR image_url = 'nan')
+                                  AND :img <> ''
+                             THEN :img
+                             ELSE image_url
+                           END
+         WHERE id = :id
+    """)
 
-    # 2) 기존 topic은 image_url이 비어있을 때만 UPDATE
-    upd = topics_df[topics_df["id"].astype(int).isin(exist_ids)].copy()
-    upd["image_url"] = upd["image_url"].fillna("").astype(str).str.strip()
-    upd = upd[upd["image_url"] != ""]
-
+    print("어디가 안돼?4444")
     updated = 0
-    if len(upd) > 0:
-        with engine.begin() as conn:
-            for _, r in upd.iterrows():
-                res = conn.execute(
-                    text("""
-                        UPDATE topic
-                           SET image_url = :img
-                         WHERE id = :id
-                           AND (image_url IS NULL OR image_url = '' OR image_url = 'nan')
-                    """),
-                    {"img": r["image_url"], "id": int(r["id"])}
-                )
-                updated += res.rowcount or 0
-        print(f"[TOPIC_IMG][UPDATE] tried={len(upd)} updated={updated}")
-    else:
-        print("[TOPIC_IMG][UPDATE] 업데이트할 이미지 없음")
+    with engine.begin() as conn:
+        for row in rows:
+            res = conn.execute(stmt, row)
+            updated += (res.rowcount or 0)
+
+    print(f"🖼️ image_url 채움 완료: {updated}건 "
+          f"(기존 값 있는 항목은 유지, 새 INSERT 없음)")
+
+# def upsert_topic_images_from_summary(engine, summary_csv_path: str):
+#     summ = pd.read_csv(summary_csv_path)
+#     if "cluster_id" not in summ.columns:
+#         print("[TOPIC_IMG] summary CSV에 cluster_id가 없습니다.")
+#         return
+#     if "image_url" not in summ.columns:
+#         print("[TOPIC_IMG] summary CSV에 image_url이 없습니다.")
+#         return
+#     print("어디가 안돼?")
+
+#     summ["image_url"] = _normalize_image_url_series(summ["image_url"]) # 추가
+
+#     topics_df = (summ[["cluster_id", "topic_name", "ai_summary", "summary_time", "image_url"]]
+#                  .rename(columns={"cluster_id": "id"})
+#                  .drop_duplicates(subset=["id"]))
+
+#     print("어디가 안돼?2222")
+#     # 기존 topic id 로드
+#     try:
+#         print("어디가 안돼-------333?")
+#         exist = pd.read_sql("SELECT id FROM topic", engine)
+#         exist_ids = set(pd.to_numeric(exist["id"], errors="coerce").dropna().astype(int))
+#     except Exception as e:
+#         print(f"[TOPIC_IMG] 기존 topic 로드 실패: {e} → 최초 삽입일 수 있음")
+#         exist_ids = set()
+
+#     # 1) 신규 topic은 image_url 포함해서 INSERT
+#     print("어디가 안돼?3333333")
+#     new_topics = topics_df[~topics_df["id"].astype(int).isin(exist_ids)].copy()
+#     if len(new_topics) > 0:
+#         new_topics.to_sql("topic", engine, index=False, if_exists="append")
+#         print(f"[TOPIC_IMG][INSERT] rows={len(new_topics)} "
+#               f"sample={new_topics[['id', 'image_url']].head(3).to_dict(orient='records')}")
+#     else:
+#         print("[TOPIC_IMG][INSERT] 신규 없음")
+
+#     # 2) 기존 topic은 image_url이 비어있을 때만 UPDATE
+#     print("어디가 안돼?4444444")
+#     upd = topics_df[topics_df["id"].astype(int).isin(exist_ids)].copy()
+#     upd["image_url"] = upd["image_url"].fillna("").astype(str).str.strip()
+#     upd = upd[upd["image_url"] != ""]
+
+#     updated = 0
+#     if len(upd) > 0:
+#         with engine.begin() as conn:
+#             for _, r in upd.iterrows():
+#                 res = conn.execute(
+#                     text("""
+#                         UPDATE topic
+#                            SET image_url = :img
+#                          WHERE id = :id
+#                            AND (image_url IS NULL OR image_url = '' OR image_url = 'nan')
+#                     """),
+#                     {"img": r["image_url"], "id": int(r["id"])}
+#                 )
+#                 updated += res.rowcount or 0
+#         print(f"[TOPIC_IMG][UPDATE] tried={len(upd)} updated={updated}")
+#     else:
+#         print("[TOPIC_IMG][UPDATE] 업데이트할 이미지 없음")
 
 
 
