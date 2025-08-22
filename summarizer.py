@@ -13,6 +13,7 @@ from tqdm import tqdm
 from S3_crawler import attach_cluster_images
 from image_not_empty import wait_for_image_urls, _normalize_image_url_series
 from utils import get_cohere_api_key, log_failed_cluster
+from preprocessing import clean_content
 
 load_dotenv()
 api_key = get_cohere_api_key()
@@ -96,30 +97,44 @@ def make_commandr_summary_cohere(cluster_df, cluster_id, api_key):
 
 def match_articles_from_csv(df, article_titles, cluster_id, cluster_col="cluster_id"):
     """CSV에서 제목을 매칭하여 완전한 기사 정보 추출"""
-    cluster_df = df[df[cluster_col] == cluster_id].copy()  # ← 하드코딩 제거
+    cluster_df = df[df[cluster_col] == cluster_id].copy() 
 
     # 🔍 디버그 출력: 요약이 준 제목 vs 실제 DF 제목
-    print("[DEBUG] predicted titles:", article_titles)
-    print("[DEBUG] cluster_df titles:", cluster_df['title'].head(10).tolist())
+    print("[DEBUG] 요약이 준 제목:", article_titles)
+    print("[DEBUG] cluster_df csv 제목:", cluster_df['title'].head(10).tolist())
+
+    # 제목 한번더 정규화 (df)
+    cluster_df["__norm_title__"] = cluster_df["title"].astype(str).map(clean_content)
+    # 제목 한번더 정규화 (요약)
+    norm_predicted = [clean_content(t) for t in (article_titles or [])]
+    print("[DEBUG] normalized 요약 제목:", norm_predicted)
+    print("[DEBUG] normalized cluster_df csv 제목:", cluster_df["__norm_title__"].head(10).tolist())
 
     cluster_articles = []
-    for title in article_titles:
-        matched = cluster_df[cluster_df['title'] == title]
+    used_idx = set()
+
+    for key in norm_predicted:
+        # 정규화된 키로 매칭
+        candidates = cluster_df[~cluster_df.index.isin(used_idx)]
+        matched = candidates[candidates["__norm_title__"] == key]
         if not matched.empty:
             row = matched.iloc[0]
+            used_idx.add(row.name)
             cluster_articles.append({
                 "title": row['title'],
-                "news_summary": row['news_summary'],
-                "press": row['press'],
-                "news_link": row['news_link'],
-                "publish_date": row['publish_date'],
+                "news_summary": row.get('news_summary'),
+                "press": row.get('press'),
+                "news_link": row.get('news_link'),
+                "publish_date": row.get('publish_date'),
                 "image_url": "",
                 "is_new": int(row.get('is_new', 0)),
                 "is_third": int(row.get('is_third', 0)),
             })
+        else:
+            print(f"[MATCH_MISS] not found for key='{key}'")
+
     print(f"✅ 최종 매칭된 기사: {len(cluster_articles)}개")
     return cluster_articles
-
 
 
 def safe_json_parse(summary_result):
