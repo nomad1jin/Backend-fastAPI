@@ -338,18 +338,32 @@ def save_commandr_output_to_db(df, summary_result, cluster_id, engine, cluster_c
         print(f"ℹ️ topic 조회 실패(최초 실행 가능성): {e}")
         topic_exists = False
 
-    # 3) topic: 없을 때만 삽입
+    # 3) topic: 없을 때만 삽입  ->  존재하면 교체(UPDATE)
     summary_row = {
         "id": cid,
         "summary_time": summary_data.get("summary_time", datetime.now().strftime("%Y-%m-%d %H:%M")),
         "topic_name": summary_data.get("topic_name", ""),
         "ai_summary": summary_data.get("ai_summary", "")
     }
+
     if not topic_exists:
         pd.DataFrame([summary_row]).to_sql("topic", engine, index=False, if_exists="append")
         print(f"🟢 topic 삽입: {cid}")
     else:
-        print(f"↩️ topic 존재: {cid} (삽입 스킵), 그래도 news는 계속 진행")
+        # ✅ 기존 topic 교체(UPDATE)
+        with engine.begin() as conn:
+            res = conn.execute(
+                text("""
+                    UPDATE topic
+                    SET topic_name  = :topic_name,
+                        ai_summary  = :ai_summary,
+                        summary_time= :summary_time
+                    WHERE id = :id
+                """),
+                summary_row
+            )
+        print(f"🟡 topic 업데이트: {cid} (rows={res.rowcount})")
+
 
     # 4) 기사 매칭
     article_titles = summary_data.get("article_titles", []) or []
@@ -431,11 +445,13 @@ def normalize_is_new(engine):
         result = conn.execute(text("""
             UPDATE news
             SET is_new = CASE
-                WHEN COALESCE(
+                WHEN is_new = 1
+                    AND COALESCE(
                             STR_TO_DATE(publish_date, '%Y-%m-%d %H:%i:%s'),
                             STR_TO_DATE(publish_date, '%Y-%m-%d %H:%i')
-                        ) >= CONVERT_TZ(NOW(), @@session.time_zone, '+09:00') - INTERVAL 24 HOUR
-                THEN 1 ELSE 0
+                        ) < CONVERT_TZ(NOW(), @@session.time_zone, '+09:00') - INTERVAL 24 HOUR
+                THEN 0
+                ELSE is_new
             END;
         """))
         updated_rows = result.rowcount
