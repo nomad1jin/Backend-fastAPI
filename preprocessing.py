@@ -22,41 +22,30 @@ def clean_content(text):
     # 특수 기호 제거
     text = text.replace('△', '')
     text = text.replace('◇', '')
-    # text = text.replace('▲', '')
+    text = text.replace('▲', '')
     text = text.replace('■', '')
 
 
     # 대괄호 [내용] 제거
-    # text = re.sub(r'\[[^\]]*\]', '', text)
     text = re.sub(r'\[.*?\]', '', text)
 
     # 한자 제거 (기본 + 확장)
-    text = re.sub(r'[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]', '', text)
+    # text = re.sub(r'[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]', '', text)
 
     # ※ 이후 모두 제거 (뉴스사 공지 등)
     text = re.sub(r'※.*', '', text)
 
-    # 뉴스 메타 정보 제거
-    meta_patterns = [
-        r'사진\s*=\s*.*',         # 사진=연합뉴스 등
-        r'출처\s*:\s*.*',         # 출처: 서울경제 등
-        r'기자\s*=\s*.*',         # 기자=홍길동 등
-        r'제보\s*=\s*.*',         # 제보=... 등
-        r'이메일\s*:\s*.*',       # 이메일: ...
-        r'카카오톡\s*:\s*@\w+',   # 카카오톡 : @...
-    ]
-
-    for pattern in meta_patterns:
-        text = re.sub(pattern, '', text, flags=re.MULTILINE)
-
-  # "ⓒ"로 시작해서 마침표(또는 줄 끝)까지 삭제
+    # "ⓒ"로 시작해서 마침표(또는 줄 끝)까지 삭제
     text = re.sub(r'ⓒ[^.\n]*[.\n]?', '', text)
     text = re.sub(r'▲[^.\n]*[.\n]?', '', text)
-    # text = re.sub(r'(?:[▲ⓒ].*?[.。!?])', '', text)
 
-  # 따옴표인데 크롤링도중에 \까지 붙음
-    # text = text.replace("\\", "")
-    text = re.sub(r"\\'", "'", text)
+    # 따옴표인데 크롤링도중에 \까지 붙음
+    text = text.replace("\\'", "")  
+    text = re.sub(r'["\'“”‘’`´]', '', text)
+
+    text = text.strip()
+    if (text.startswith('"') and text.endswith('"')) or (text.startswith("'") and text.endswith("'")):
+        text = text[1:-1].strip()
 
     # 중복 공백 정리
     text = re.sub(r'\s+', ' ', text).strip()
@@ -129,6 +118,9 @@ def get_nouns_with_konlpy(df, column):
 
 # ===== 전처리 =====
 def preprocess_df(df):
+    df['title'] = df['title'].fillna('').apply(
+        lambda x: convert_hanja_to_korean(x, hanja_to_korean)
+    )
     df['title'] = df['title'].apply(clean_content)
     df['news_summary'] = df['news_summary'].fillna('').apply(
         lambda x: convert_hanja_to_korean(x, hanja_to_korean)
@@ -137,31 +129,3 @@ def preprocess_df(df):
     df = get_nouns_with_konlpy(df, 'news_summary')
     return df
 
-
-# load_dotenv()
-
-# client = openai.OpenAI(get_openai_api_key())
-# ### openai 명사 추출
-# def extract_nouns_with_gpt(text):
-#     prompt = f"""다음 요약 문장에서 핵심 주제를 대표하는 명사를 최대한 많이 추출해줘.
-# 중복된 명사 빈도도 중요하니, 문장에서 같은 명사가 중복되면 그냥 중복된 만큼 여러번 출력해줘. 만약 한자가 있다면 최대한 한국어로 바꿔줘.
-# 문장: {text}
-# 명사:"""
-
-#     response = client.chat.completions.create(
-#         model="gpt-3.5-turbo",  # 또는 "gpt-4"
-#         messages=[
-#             {"role": "user", "content": prompt}
-#         ],
-#         temperature=0.2,
-#     )
-
-#     content = response.choices[0].message.content
-#     nouns = [w.strip() for w in content.replace("\n", ",").split(",") if w.strip()]
-#     return nouns
-
-# def get_nouns_with_openai(df, column):
-#     tqdm.pandas()
-#     new_column = f"{column}_nouns"
-#     df[new_column] = df[column].progress_apply(extract_nouns_with_gpt)
-#     return df
