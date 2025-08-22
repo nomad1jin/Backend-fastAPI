@@ -259,107 +259,6 @@ def merge_cluster_third_results(df1000, new_df):
     return final_df
 
 
-# ==== 3차 군집: TF-IDF + DBSCAN으로 노이즈(-1)만 재군집 ====
-# def third_stage_dbscan_on_noise(
-#     df_total: pd.DataFrame,
-#     df_latest: pd.DataFrame,
-#     noun_col: str = 'konlpy_nouns',
-#     total_label_col: str = 'tfidf_cluster_id',
-#     latest_label_col: str = 'assigned_tfidf_cluster',
-#     eps: float = 0.35,
-#     min_samples: int = 5,
-#     min_df: int = 2,
-#     ngram_range=(1, 2)
-# ):
-#     """
-#     df_total 의 tfidf_cluster_id == -1 과
-#     df_latest 의 assigned_tfidf_cluster == -1 만 모아
-#     get_tfidf_matrix 재사용 -> DBSCAN(metric='cosine')
-#     새 라벨은 현재 존재하는 최대 라벨 + 1부터 부여
-#     """
-#     # 안전 파싱 (기존 safe_eval 재사용)
-#     if noun_col in df_total.columns:
-#         df_total[noun_col] = df_total[noun_col].apply(safe_eval)
-#     if noun_col in df_latest.columns:
-#         df_latest[noun_col] = df_latest[noun_col].apply(safe_eval)
-
-#     mask_total_noise = (total_label_col in df_total.columns) & (df_total[total_label_col] == -1)
-#     mask_latest_noise = (latest_label_col in df_latest.columns) & (df_latest[latest_label_col] == -1)
-
-#     noise_total = df_total.loc[mask_total_noise, [noun_col]].copy()
-#     noise_latest = df_latest.loc[mask_latest_noise, [noun_col]].copy()
-
-#     if len(noise_total) + len(noise_latest) == 0:
-#         tqdm.write("✅ 3차 군집 대상(-1) 없음 → 스킵")
-#         return df_total, df_latest
-
-#     # 기존 라벨의 최댓값 계산 (충돌 방지용 오프셋)
-#     existing_total_max = df_total[total_label_col].replace(-1, np.nan).max(skipna=True) if total_label_col in df_total else np.nan
-#     existing_latest_max = df_latest[latest_label_col].replace(-1, np.nan).max(skipna=True) if latest_label_col in df_latest else np.nan
-#     exist_max = pd.Series([existing_total_max, existing_latest_max]).max(skipna=True)
-#     start_label = int(exist_max) + 1 if pd.notnull(exist_max) else 0
-
-#     # TF-IDF 행렬 생성 (기존 get_tfidf_matrix 재사용)
-#     nouns_all = pd.concat([noise_total[noun_col], noise_latest[noun_col]], axis=0).tolist()
-#     try:
-#         tfidf_mat = get_tfidf_matrix(nouns_all, min_df=min_df, ngram_range=ngram_range)
-#     except ValueError as e:
-#         if "After pruning, no terms remain" in str(e):
-#             # 옵션 A: 그대로 스킵 → 두 데이터프레임 그대로 반환
-#             # tqdm.write("⚠️ 3차 군집 스킵: 어휘 없음")
-#             # return df_total, df_latest
-#             # (또는 옵션 B: 1회 폴백)
-#             tfidf_mat = get_tfidf_matrix(nouns_all, min_df=1, ngram_range=(1,2))
-#         else:
-#             raise
-
-
-#     # DBSCAN (코사인 거리)
-#     db = DBSCAN(eps=eps, min_samples=min_samples, metric='cosine')
-#     labels = db.fit_predict(tfidf_mat)  # -1은 여전히 노이즈
-
-#     # 새로 생긴 군집 라벨만 리매핑
-#     uniq = sorted([l for l in np.unique(labels) if l >= 0])
-#     remap = {l: (start_label + i) for i, l in enumerate(uniq)}
-
-#     # 분할 반영
-#     n_total = len(noise_total)
-#     labels_total = labels[:n_total]
-#     labels_latest = labels[n_total:]
-
-#     # total 쪽 반영
-#     new_vals_total = [remap.get(l, -1) for l in labels_total]
-#     df_total.loc[mask_total_noise, total_label_col] = new_vals_total
-
-#     # latest 쪽 반영
-#     new_vals_latest = [remap.get(l, -1) for l in labels_latest]
-#     df_latest.loc[mask_latest_noise, latest_label_col] = new_vals_latest
-
-#     tqdm.write(f"🎯 3차 군집 완료: 신규 라벨 {len(uniq)}개 생성 (시작={start_label})")
-#     return df_total, df_latest
-
-
-# ###6. 최종 결과 final_df
-# def merge_cluster_results(df1000, new_df):
-#     # df1000_export = df1000.copy()
-#     df1000_export = df1000.copy().reset_index(drop=True)
-#     df1000_export['new'] = False
-
-#     # new_df_export = new_df.copy()
-#     new_df_export = new_df.copy().reset_index(drop=True)
-#     new_df_export['new'] = True
-#     new_df_export['second'] = False
-#     new_df_export['tfidf_cluster_id'] = new_df_export['assigned_tfidf_cluster']
-
-#     columns_to_export = [
-#         'tfidf_cluster_id', 'title', 'press', 'news_summary',
-#         'embedding', 'second', 'new', 'publish_date', 'news_link'
-#         # , 'image_url'
-#     ]
-#     final_df = pd.concat([df1000_export[columns_to_export], new_df_export[columns_to_export]], ignore_index=True)
-#     final_df.to_csv("final_clustering.csv", index=False, encoding='utf-8-sig')
-#     return final_df
-
 def assign_cluster_ids_with_df1000_seed(final_df: pd.DataFrame, db_max_id: int | None = None) -> pd.DataFrame:
     df = final_df.copy()
     df["tfidf_cluster_id"] = df["tfidf_cluster_id"].fillna(-1).astype(int)
@@ -385,24 +284,6 @@ def assign_cluster_ids_with_df1000_seed(final_df: pd.DataFrame, db_max_id: int |
     seed_max = max(seed_candidates) if seed_candidates else -1
     start_id = int(seed_max) + 1
     next_id = start_id
-
-    # df = final_df.copy()
-    # df["tfidf_cluster_id"] = df["tfidf_cluster_id"].fillna(-1).astype(int)
-
-    # # === 1) 시드 계산: df1000(= is_new False, is_third False)에서 최대값 찾기
-    # # 1) '진짜 기존(df1000, 3차 전)' 라벨만 씨드 후보로
-    # mask_seed = (
-    #     (df.get("is_new", False) == False) &
-    #     (df.get("is_third", False) == False) &   # ★ 3차에서 새로 생긴 라벨 제외
-    #     (df["tfidf_cluster_id"] != -1)
-    # )
-
-    # # ★ 과거 cluster_id는 씨드 산정에서 제외 (충돌/팽창 방지)
-    # seed_candidates = df.loc[mask_seed, "tfidf_cluster_id"].tolist()
-
-    # seed_max = max(seed_candidates) if seed_candidates else 0
-    # start_id = int(seed_max) + 1
-    # next_id = start_id
 
     # === 2) A: 신규 & 비노이즈 & 3차 아님 → 군집 단위 발급
     mask_A = (df["is_new"] == True) & (df["is_third"] == False) & (df["tfidf_cluster_id"] != -1)
@@ -498,7 +379,7 @@ def run_clustering(final_df1000_path: str = "path/to/final_df1000.csv"):
             max_cluster_id = result.scalar()
     else:
         max_cluster_id = 0
-    print(f"현재 DB 최대 cluster_id: {max_cluster_id}")
+    print(f"현재 토픽DB 최대 cluster_id: {max_cluster_id}")
 
     # 7) df1000을 시드로 A→B 군집 단위 부여
     final_df = assign_cluster_ids_with_df1000_seed(final_df, db_max_id=max_cluster_id)
